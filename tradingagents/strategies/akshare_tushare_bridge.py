@@ -5,7 +5,8 @@
 total_mv/circ_mv=万元、daily.amount=千元、vol=手、trade_date/cal_date/end_date=YYYYMMDD）。
 
 数据源与容错（akshare 1.18.x，2026-08 实测；东财域名在当前网络被代理拦截时自动回退）：
-- stock_basic       : 新浪代码表 + 沪/深/北交所代码表补全 list_date/industry/exchange
+- stock_basic       : 沪/深/北交所代码表直拼（code/name/list_date/industry/exchange），
+                       北交所域名不可达时 15s 超时保护，不阻塞
 - daily_basic       : 单只→雪球快照（含 pe_ttm/pb/total_mv/circ_mv/dv_ttm）；
                       全市场→东方财富 spot_em，失败回退腾讯 spot_tx；
                       支持 trade_date 参数（列值=传入交易日，默认今天）
@@ -32,6 +33,7 @@ total_mv/circ_mv=万元、daily.amount=千元、vol=手、trade_date/cal_date/en
 股票代码后缀规则：8/4 开头→BJ，6/9 开头→SH，其余（0/3）→SZ。
 """
 import re
+import threading
 from datetime import datetime
 
 import pandas as pd
@@ -149,6 +151,25 @@ def _as_num(x):
         return None
 
 
+def _call_timeout(fn, timeout=20.0):
+    """线程超时保护：个别数据源域名（如北交所 bse.cn）在网络受限时阻塞 100s+。
+
+    用 daemon 线程限制等待时长，超时返回 None，由调用方容错（缺失部分数据而非卡死）。
+    """
+    box = {}
+
+    def runner():
+        try:
+            box["df"] = fn()
+        except Exception:
+            pass
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    t.join(timeout)
+    return box.get("df")
+
+
 class ProClient:
     """伪装成 ts.pro_api() 的 client（仅 A 股接口，龟龟框架所需子集）。"""
 
@@ -162,62 +183,61 @@ class ProClient:
     def _stock_basic_df(self):
         if self._basic_cache is not None:
             return self._basic_cache.copy()
-        df = ak.stock_info_a_code_name()
-        df = df.rename(columns={"code": "raw_code", "name": "name"})
-        df["ts_code"] = df["raw_code"].apply(_ts_code_with_suffix)
-        df["name"] = df["name"].astype(str)
 
-        # --- 全市场 industry / list_date / 名称补全（交易所代码表） ---
-        code2industry: dict = {}
+        # 代码/名称/list_date/industry 直接取自沪/深/北交易所代码表：
+        # 不依赖 ak.stock_info_a_code_name()（其内部固定调用北交所接口，在网络
+        # 屏蔽 www.bse.cn 时整表阻塞 100s+）。北交所单独加线程超时保护。
+        code2name: dict = {}
         code2listdate: dict = {}
+        code2industry: dict = {}
         code2fullname: dict = {}
-        # 上交所：证券代码/证券简称/证券全称/上市日期（无行业列）
+        # 上交所（主板+科创板）：证券代码/证券简称/证券全称/上市日期（无行业列）
         try:
             sh = ak.stock_info_sh_name_code()
-            code2listdate.update({
-                str(c).strip().zfill(6): _trade_date_to_yyyymmdd(d)
-                for c, d in zip(sh["证券代码"], sh["上市日期"])
-            })
-            code2fullname.update({
-                str(c).strip().zfill(6): str(n)
-                for c, n in zip(sh["证券代码"], sh["证券全称"])
-                if str(n) not in ("", "nan")
-            })
+            for c, n, f, d in zip(sh["证券代码"], sh["证券简称"],
+                                 sh["证券全称"], sh["上市日期"]):
+                c = str(c).strip().zfill(6)
+                code2name[c] = str(n)
+                code2listdate[c] = _trade_date_to_yyyymmdd(d)
+                if str(f) not in ("", "nan"):
+                    code2fullname[c] = str(f)
         except Exception:
             pass
-        # 深交所：A股代码/A股上市日期/所属行业（字母大类，如 "J 金融业"）
+        # 深交所：A股代码/A股简称/A股上市日期/所属行业（字母大类，如 "J 金融业"）
         try:
             sz = ak.stock_info_sz_name_code()
-            code2listdate.update({
-                str(c).strip().zfill(6): _trade_date_to_yyyymmdd(d)
-                for c, d in zip(sz["A股代码"], sz["A股上市日期"])
-            })
-            code2industry.update({
-                str(c).strip().zfill(6): str(ind)
-                for c, ind in zip(sz["A股代码"], sz["所属行业"])
-                if str(ind) not in ("", "nan")
-            })
+            for c, n, d, ind in zip(sz["A股代码"], sz["A股简称"],
+                                    sz["A股上市日期"], sz["所属行业"]):
+                c = str(c).strip().zfill(6)
+                code2name[c] = str(n)
+                code2listdate[c] = _trade_date_to_yyyymmdd(d)
+                if str(ind) not in ("", "nan"):
+                    code2industry[c] = str(ind)
         except Exception:
             pass
-        # 北交所：证券代码/上市日期/所属行业
-        try:
-            bj = ak.stock_info_bj_name_code()
-            code2listdate.update({
-                str(c).strip().zfill(6): _trade_date_to_yyyymmdd(d)
-                for c, d in zip(bj["证券代码"], bj["上市日期"])
-            })
-            code2industry.update({
-                str(c).strip().zfill(6): str(ind)
-                for c, ind in zip(bj["证券代码"], bj["所属行业"])
-                if str(ind) not in ("", "nan")
-            })
-        except Exception:
-            pass
+        # 北交所：线程超时保护（bse.cn 不可达时 15s 内放弃，仅缺失北交所数据）
+        bj = _call_timeout(lambda: ak.stock_info_bj_name_code(), timeout=15.0)
+        if bj is not None:
+            try:
+                for c, n, d, ind in zip(bj["证券代码"], bj["证券简称"],
+                                        bj["上市日期"], bj["所属行业"]):
+                    c = str(c).strip().zfill(6)
+                    code2name[c] = str(n)
+                    code2listdate[c] = _trade_date_to_yyyymmdd(d)
+                    if str(ind) not in ("", "nan"):
+                        code2industry[c] = str(ind)
+            except Exception:
+                pass
 
-        df["industry"] = df["raw_code"].astype(str).map(code2industry)
-        df["fullname"] = df["raw_code"].astype(str).map(code2fullname)
+        df = pd.DataFrame({
+            "raw_code": list(code2name.keys()),
+            "name": list(code2name.values()),
+        })
+        df["ts_code"] = df["raw_code"].apply(_ts_code_with_suffix)
+        df["industry"] = df["raw_code"].map(code2industry)
+        df["fullname"] = df["raw_code"].map(code2fullname)
         df["area"] = None
-        df["list_date"] = df["raw_code"].astype(str).map(code2listdate)
+        df["list_date"] = df["raw_code"].map(code2listdate)
         df["exchange"] = df["ts_code"].apply(_exchange_of)
         self._basic_cache = df[
             ["ts_code", "name", "industry", "fullname", "area", "exchange", "list_date"]
