@@ -2,10 +2,15 @@
 """NDX 动量对冲策略（移植自 wepoets1107/ndx-momentum-hedge，MIT）。
 
 纳斯达克100动量选股 + PSQ 1x 反向 QQQ 对冲，周频调仓。
-数据源优先 yfinance；失败时回退 Yahoo query2 直连（requests + crumb），
-成功结果缓存到 data/cache/ndx_prices.pkl（2 小时有效）。
+数据源优先 yfinance；失败时回退 Yahoo query2 直连（requests + crumb）。
+拉取前先读本地缓存 data/cache/ndx_prices.pkl（2 小时内且含 QQQ 键直接命中，
+数据源可用时也走缓存，避免每次都全量拉取 103 个 ticker）；
+拉取成功后写回缓存（含时间戳）。
 所有数据源都不可用时返回 {"error": "数据获取失败"}。
+上次调仓 top_symbols 持久化在 data/cache/ndx_last_top.json，
+服务重启后 changes 仍能基于文件计算。
 """
+import json
 import os
 import pickle
 import time
@@ -21,6 +26,11 @@ CACHE_PATH = os.path.join(
     "data", "cache", "ndx_prices.pkl",
 )
 
+LAST_TOP_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "cache", "ndx_last_top.json",
+)
+
 NDX_100 = [
     "NVDA", "AAPL", "AVGO", "META", "MU", "MSFT", "AMD", "AMZN", "TSLA", "GOOGL",
     "GOOG", "INTC", "ASML", "CSCO", "COST", "AMAT", "LRCX", "NFLX", "PLTR", "PANW",
@@ -33,9 +43,6 @@ NDX_100 = [
     "CRM", "NOW", "ISRG", "BIIB", "CEG", "CDW", "CHTR", "DLTR", "FANG", "ILMN",
     "MSTR", "ON", "PYPL", "RIVN", "SMCI", "TTWO", "VRSK", "ZM",
 ]
-
-# 上次调仓的 top_symbols（模块级内存缓存，进程重启后重置）
-_LAST_TOP = None
 
 
 def _series_to_prices(close):
@@ -57,7 +64,7 @@ def _series_to_prices(close):
 
 
 def _save_cache(data):
-    """把 {ticker: {date: price}} 写入本地 pkl 缓存"""
+    """把 {ticker: {date: price}} 写入本地 pkl 缓存（含时间戳）"""
     try:
         os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
         with open(CACHE_PATH, "wb") as f:
@@ -67,17 +74,40 @@ def _save_cache(data):
 
 
 def _load_cache(cache_minutes=120):
-    """读取本地 pkl 缓存；命中且未过期则返回数据，否则返回 None"""
+    """读取本地 pkl 缓存；命中（未过期且含 QQQ 键）则返回数据，否则返回 None"""
     if not os.path.exists(CACHE_PATH):
         return None
     try:
         with open(CACHE_PATH, "rb") as f:
             cache = pickle.load(f)
-        if time.time() - cache.get("_ts", 0) < cache_minutes * 60 and cache.get("data"):
-            return cache["data"]
+        data = cache.get("data") or {}
+        if time.time() - cache.get("_ts", 0) < cache_minutes * 60 and data.get("QQQ"):
+            return data
     except Exception:
         pass
     return None
+
+
+def _load_last_top():
+    """读取上次调仓的 top_symbols（JSON 文件；缺失/损坏视为空列表）"""
+    try:
+        with open(LAST_TOP_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def _save_last_top(top_symbols):
+    """把本次调仓的 top_symbols 写入 JSON 文件（跨进程持久化，供 changes 使用）"""
+    try:
+        os.makedirs(os.path.dirname(LAST_TOP_PATH), exist_ok=True)
+        with open(LAST_TOP_PATH, "w", encoding="utf-8") as f:
+            json.dump(top_symbols, f, ensure_ascii=False)
+    except Exception:
+        pass
 
 
 def _fetch_prices_yf(tickers):
@@ -149,14 +179,18 @@ def _yahoo_probe():
 
 
 def _fetch_prices(tickers):
-    """多级获取：yfinance -> query2 直连 -> 本地缓存兜底。
+    """多级获取：本地缓存(2h) -> yfinance -> query2 直连 -> 过期缓存兜底。
 
+    数据源可用时也优先走 2 小时内的本地缓存，避免每次都全量拉取。
     返回 {ticker: {date: price}}
     """
     try:
         yf.set_config("network.retries", 0)
     except Exception:
         pass
+    cached = _load_cache()  # 默认 120 分钟；含 QQQ 键且未过期则直接命中
+    if cached:
+        return cached
     if _yahoo_probe():
         try:
             out = _fetch_prices_yf(tickers)
@@ -168,7 +202,7 @@ def _fetch_prices(tickers):
     out = _fetch_prices_query2(tickers)
     if out.get("QQQ"):
         return out
-    cached = _load_cache(cache_minutes=24 * 60 * 7)  # 过期缓存最后兜底（7 天）
+    cached = _load_cache(cache_minutes=24 * 60 * 7)  # 网络全失败时用过期缓存最后兜底（7 天）
     return cached or {}
 
 
@@ -188,7 +222,6 @@ def run_ndx_momentum_hedge(prices=None):
 
     prices: 可选，{ticker: {date: price}}。不传则自动拉取网络数据。
     """
-    global _LAST_TOP
     if prices is None:
         prices = _fetch_prices(NDX_100)
     qqq_dates = sorted(prices.get("QQQ", {}).keys())
@@ -217,11 +250,11 @@ def run_ndx_momentum_hedge(prices=None):
     qqq_w = round((qqq_now / qqq_lw - 1) * 100, 1) if qqq_now and qqq_lw else 0
     psq_w = round((psq_now / psq_lw - 1) * 100, 1) if psq_now and psq_lw else 0
 
-    # 对比上次持仓（内存缓存；首次调用视为全部新增）
+    # 对比上次持仓（JSON 文件持久化，服务重启后仍生效；文件缺失视为全部新增）
     top_syms = [m["symbol"] for m in top_k]
-    prev_set = set(_LAST_TOP or [])
+    prev_set = set(_load_last_top())
     cur_set = set(top_syms)
-    _LAST_TOP = list(cur_set)
+    _save_last_top(top_syms)
     rank_order = {s: i for i, s in enumerate(top_syms)}
     changes = {
         "added": sorted(cur_set - prev_set, key=lambda s: rank_order.get(s, 99)),

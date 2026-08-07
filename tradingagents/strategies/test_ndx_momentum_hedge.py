@@ -4,10 +4,22 @@
 说明：Yahoo Finance（yfinance/query2）在此网络环境被 403/429 拦截，故测试通过
 注入本地构造的价格序列验证策略核心逻辑，另测数据源失败时的降级行为。
 """
+import json
+import os
+
 import numpy as np
 import pandas as pd
+import pytest
 
+import tradingagents.strategies.ndx_momentum_hedge as mod
 from tradingagents.strategies.ndx_momentum_hedge import run_ndx_momentum_hedge, _fetch_prices
+
+
+@pytest.fixture(autouse=True)
+def _isolate_files(tmp_path, monkeypatch):
+    """每个测试用独立 tmp 目录隔离缓存/last_top 文件，避免污染真实 data/cache"""
+    monkeypatch.setattr(mod, "CACHE_PATH", str(tmp_path / "ndx_prices.pkl"))
+    monkeypatch.setattr(mod, "LAST_TOP_PATH", str(tmp_path / "ndx_last_top.json"))
 
 
 def _series(start, mom20, mom5, last, n=60):
@@ -95,3 +107,56 @@ def test_data_failure_returns_error(monkeypatch):
     r = run_ndx_momentum_hedge()
     assert isinstance(r, dict)
     assert "error" in r
+
+
+def test_fetch_prices_uses_fresh_cache(monkeypatch):
+    """数据源可用时，2 小时内缓存命中则直接返回，不触发任何网络拉取"""
+    fake = {"QQQ": FAKE["QQQ"], "PSQ": FAKE["PSQ"]}
+    mod._save_cache(fake)
+    hits = {"n": 0}
+
+    def boom(*args, **kwargs):
+        hits["n"] += 1
+        raise AssertionError("缓存命中时不应触发网络拉取")
+
+    monkeypatch.setattr(mod, "_yahoo_probe", lambda: True)
+    monkeypatch.setattr(mod, "_fetch_prices_yf", boom)
+    monkeypatch.setattr(mod, "_fetch_prices_query2", boom)
+    out = mod._fetch_prices(mod.NDX_100)
+    assert out == fake
+    assert hits["n"] == 0
+
+
+def test_fetch_prices_writes_cache_and_hits_next_call(monkeypatch):
+    """拉取成功后写入缓存；再次调用命中缓存返回相同数据，且只拉取一次"""
+    n = {"calls": 0}
+
+    def fake_yf(tickers):
+        n["calls"] += 1
+        return dict(FAKE)
+
+    monkeypatch.setattr(mod, "_yahoo_probe", lambda: True)
+    monkeypatch.setattr(mod, "_fetch_prices_yf", fake_yf)
+    monkeypatch.setattr(mod, "_fetch_prices_query2", lambda t: {})
+    first = mod._fetch_prices(mod.NDX_100)
+    second = mod._fetch_prices(mod.NDX_100)
+    assert first == second
+    assert n["calls"] == 1  # 第二次命中缓存，未重新拉取
+    assert os.path.exists(mod.CACHE_PATH)
+    assert first.get("QQQ")  # 缓存内容含 QQQ
+
+
+def test_changes_persist_to_file(monkeypatch):
+    """changes 基于 JSON 文件持久化：预置上次持仓后，报告写入新持仓并计算增删"""
+    mod._save_last_top(["NVDA", "MSFT", "GOOGL", "AMZN", "X"])  # 上次持仓含 X，缺 TSLA
+    r = run_ndx_momentum_hedge(prices=FAKE)
+    assert r["changes"]["added"] == ["TSLA"]
+    assert r["changes"]["removed"] == ["X"]
+    # 本次持仓已写回文件
+    with open(mod.LAST_TOP_PATH, "r", encoding="utf-8") as f:
+        assert json.load(f) == r["top_symbols"]
+    # 再次运行（模拟服务重启后），changes 基于文件：无新增无移除
+    r2 = run_ndx_momentum_hedge(prices=FAKE)
+    assert r2["changes"]["added"] == []
+    assert r2["changes"]["removed"] == []
+    assert r2["changes"]["kept"] == r2["top_symbols"]
