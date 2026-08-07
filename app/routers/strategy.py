@@ -18,3 +18,10 @@ def ndx_momentum():
 @router.get("/health")
 def strategy_health():
     return {"success": True, "data": {"strategies": ["ndx-momentum"]}}
+
+
+@router.get("/turtle-valuation/{ts_code}")
+async def turtle_valuation(ts_code: str):
+    """运行龟龟估值引擎（DCF/DDM/PE Band/PEG/PS，akshare 数据）"""
+    from tradingagents.strategies.turtle.adapter import run_turtle_valuation
+    return {"success": True, "data": run_turtle_valuation(ts_code)}
