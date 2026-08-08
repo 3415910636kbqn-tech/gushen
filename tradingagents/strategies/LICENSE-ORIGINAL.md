@@ -51,3 +51,13 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+## 量化能力整合（2026-08-08）
+
+- **Vibe-Trading**（HKUDS，MIT）：https://github.com/HKUDS/Vibe-Trading
+  - `factors/operators.py` 算子、`factors/registry.py` 精选因子移植自 `agent/src/factors/`（base.py + zoo/qlib158 等）
+  - `quantlib/` 移植自 `agent/src/quantlib/`（options/risk/performance/fundmath）
+  - `backtest/` 借鉴 `agent/backtest/engines/`（china_a 的 A 股市场规则口径）
+- **stock-sdk**（chengzuopeng，ISC）：https://github.com/chengzuopeng/stock-sdk
+  - `indicators.py` 移植自 `src/indicators/*.ts`（17 个技术指标）
+  - `chips.py` 移植自 `src/indicators/chip.ts`（东财 CYQ 筹码分布算法）
+  - 前端 `stock-sdk` npm 包（行情 K 线）

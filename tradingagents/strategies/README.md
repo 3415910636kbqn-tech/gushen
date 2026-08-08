@@ -39,3 +39,22 @@
 - `turtle/` 源码移植自 Turtle_investment_framework（MIT）：https://github.com/terancejiang/Turtle_investment_framework
 - `ndx_momentum_hedge.py` 移植自 ndx-momentum-hedge（MIT）：https://github.com/wepoets1107/ndx-momentum-hedge
 - 桥接层与适配层为本项目新增（Apache 2.0，随主项目）
+## 量化工具模块（2026-08-08 新增）
+
+| 模块 | 功能 | 来源 |
+|------|------|------|
+| `indicators.py` | 17 个技术指标（MA/MACD/KDJ/RSI/BOLL/ATR/OBV/DMI/SAR 等），pandas 实现 | stock-sdk (ISC) |
+| `chips.py` | 筹码分布 CYQ（获利比例/平均成本/90-70 成本区间/筹码峰） | stock-sdk (ISC) |
+| `factors/` | Alpha 因子库：17 个截面算子 + 精选 30 因子（动量/均值回复/波动/量价/基本面） | Vibe-Trading (MIT) |
+| `backtest/` | A股回测引擎：buy_hold/MA交叉/RSI反转/动量，T+1+涨跌停+手续费，无未来函数（次日开盘成交） | Vibe-Trading 借鉴 (MIT) |
+| `quantlib/` | 金融数学库：期权 BS/Greeks/隐含波动率、VaR/CVaR、Sharpe/Sortino/回撤、XIRR/IRR | Vibe-Trading (MIT) |
+
+**REST API（`/api/strategy/`，均需登录认证）：**
+- `GET /chips/{symbol}`、`GET /factors`、`POST /factor-screen`、`POST /backtest`、`POST /quantlib`
+
+**前端：** `/analysis/quant` 量化工具页（行情技术图用 stock-sdk npm 拉 K 线 + ECharts；筹码图/因子选股/回测曲线/金融计算器）
+
+**已知限制：**
+- `factor-screen` 实时算因子较慢（≤50 只，每只拉历史），生产建议离线预计算全市场因子快照
+- `backtest` 为简版 A 股规则（涨跌停不分 ST/创业板、无滑点、整手 100 股）
+- 筹码换手率在数据源降级时为成交量占比估算（相对量能可信）

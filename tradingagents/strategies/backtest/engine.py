@@ -9,8 +9,8 @@
   首日无前收，不做涨跌停限制。
 - 手续费：佣金 万2.5（双边，单笔最低 5 元）；卖出印花税 千0.5；过户费忽略。
 - 最小 100 股（整手），买入数量向下取整到整手。
-- 信号当日在收盘价成交（简版：信号基于截至当日 close 计算，成交亦用当日
-  close；不引入次一 bar 开盘成交/滑点模型，避免未来函数争议的最小实现）。
+- 无未来函数：信号在当日收盘产生，次一交易日开盘价成交（无滑点）；
+  buy_hold 例外，首日开盘直接建仓。涨跌停以成交价相对前收判断。
 
 内置策略（strategy: str + params: dict）：
 - buy_hold      : 首日全仓买入，持有至末日收盘强制平仓。
@@ -383,23 +383,45 @@ def run_backtest(symbol: str, strategy: str, start: str, end: str,
         return _error_result(symbol, str(exc))
 
     eng = BacktestEngine(initial_capital=capital)
+    opens = df["open"].to_numpy(dtype=float)
     closes = df["close"].to_numpy(dtype=float)
     dates = df["trade_date"].tolist()
     n = len(df)
     state: Dict[str, Any] = {"symbol": symbol, "df": df}
+    # 无未来函数：信号在当日收盘产生，次一交易日开盘价成交（buy_hold 例外：
+    # 首日开盘直接建仓，不依赖信号）。T+1 天然满足（买入 bar 当日不产生可执行卖出）。
+    pending: Optional[str] = None
 
     for i in range(n):
         date, price = dates[i], float(closes[i])
         pre_close = float(closes[i - 1]) if i > 0 else None
+
+        # 1) 执行上一 bar 收盘产生的信号（今日开盘价成交）
+        if pending is not None and i > 0:
+            open_price = float(opens[i])
+            if pending == "buy" and eng.shares == 0 and not _is_limit_up(pre_close, open_price):
+                eng._try_buy(date, open_price)
+            elif pending == "sell" and eng.shares > 0 and not _is_limit_down(pre_close, open_price):
+                eng._try_sell(date, open_price)
+            pending = None
+
+        # 2) buy_hold 特判：首日开盘建仓
+        if strategy == "buy_hold" and i == 0 and eng.shares == 0:
+            open_price = float(opens[i])
+            if not _is_limit_up(None, open_price):
+                eng._try_buy(date, open_price)
+
+        # 3) 计算当日信号（收盘后产生，次一交易日执行）
         try:
             sig = signal_fn(df, i, state)
         except Exception:
             sig = "hold"
-        if eng.shares > 0:
-            if sig == "sell" and not _is_limit_down(pre_close, price):
-                eng._try_sell(date, price)
-        elif sig == "buy" and not _is_limit_up(pre_close, price):
-            eng._try_buy(date, price)
+        if sig == "buy" and eng.shares == 0:
+            pending = "buy"
+        elif sig == "sell" and eng.shares > 0:
+            pending = "sell"
+
+        # 4) 权益曲线按收盘价估值
         eng.record_equity(date, price)
 
     # 末日收盘强制平仓（估值性质，不检查涨跌停；T+1 仍适用：末日买入则无法当日平仓）

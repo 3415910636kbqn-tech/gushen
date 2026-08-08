@@ -155,7 +155,9 @@ def test_limit_down_blocks_sell():
 
 def test_fee_calculation():
     """手续费: 佣金 万2.5（最低 5）+ 卖出印花税 千0.5"""
-    closes = [10.0, 12.0]
+    # 无未来函数：信号在当日收盘产生，次一交易日开盘价成交。
+    # i=0 收盘产生 buy → i=1 开盘(10.0) 买入；i=1 收盘产生 sell → i=2 开盘(12.0) 卖出
+    closes = [10.0, 10.0, 12.0]
     dates = _dates(len(closes))
 
     def fn(df, i, state):
@@ -165,7 +167,7 @@ def test_fee_calculation():
             return "sell"
         return "hold"
 
-    r = run_backtest("600000", "custom", "20240101", "20240102",
+    r = run_backtest("600000", "custom", "20240101", "20240103",
                      params={"strategy_fn": fn}, initial_capital=100500,
                      data_source=_fake_source(_make_df(closes, dates)))
     assert "error" not in r, r
@@ -173,6 +175,7 @@ def test_fee_calculation():
     sells = [t for t in r["trades"] if t["side"] == "sell"]
     assert len(buys) == 1 and len(sells) == 1, r["trades"]
     b, s = buys[0], sells[0]
+    assert b["date"] == dates[1] and s["date"] == dates[2]
     assert b["shares"] == 10000          # 100500 现金整手 10000 股 @10
     assert b["amount"] == pytest.approx(100000.0)
     assert b["fee"] == pytest.approx(25.0)        # max(100000*0.00025, 5) = 25
