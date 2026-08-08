@@ -34,6 +34,21 @@ async def turtle_valuation(ts_code: str, user: dict = Depends(get_current_user))
     return {"success": True, "data": run_turtle_valuation(code)}
 
 
+@router.get("/chips/{symbol}")
+async def chips(symbol: str, user: dict = Depends(get_current_user)):
+    """筹码分布 CYQ（东财算法移植）：获利比例/平均成本/90-70 成本区间/筹码峰"""
+    code = symbol.strip().upper()
+    if not re.fullmatch(r"\d{6}(\.(SH|SZ|BJ))?", code):
+        raise HTTPException(status_code=400, detail="无效股票代码，需 6 位数字（可带 .SH/.SZ/.BJ 后缀）")
+    from tradingagents.strategies.chips import calc_chip_distribution, fetch_chip_klines
+    klines = fetch_chip_klines(code)
+    if klines is None or len(klines) == 0:
+        raise HTTPException(status_code=404, detail="无可用行情数据")
+    r = calc_chip_distribution(klines)
+    date = str(klines.iloc[-1]["date"])
+    return {"success": True, "data": {"symbol": code, "date": date, **r}}
+
+
 @router.get("/turtle-screener")
 async def turtle_screener(tier1_only: bool = True, tier2_limit: int = 10,
                           user: dict = Depends(get_current_user)):
