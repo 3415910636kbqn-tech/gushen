@@ -25,6 +25,7 @@
     "nprogress": "^0.2.0",
     "pinia": "^2.1.7",
     "sortablejs": "^1.15.6",
+    "stock-sdk": "^2.4.1",
     "vue": "^3.4.0",
     "vue-echarts": "^6.6.1",
     "vue-router": "^4.2.5",

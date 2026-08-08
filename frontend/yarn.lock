@@ -2828,6 +2828,11 @@ source-map-js@^1.2.1, "source-map-js@>=0.6.2 <2.0.0":
   resolved "https://registry.npmmirror.com/source-map-js/-/source-map-js-1.2.1.tgz"
   integrity sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==
 
+stock-sdk@^2.4.1:
+  version "2.4.1"
+  resolved "https://registry.npmmirror.com/stock-sdk/-/stock-sdk-2.4.1.tgz"
+  integrity sha512-sjNzY6Z0oMAOxAzyR5w+Ang23lAWJAYqKYhWa0r2NrSza50v7Vxphd0d+kYGXn9E3V+eWhnzHboLsi1APDiTow==
+
 strip-ansi@^6.0.1:
   version "6.0.1"
   resolved "https://registry.npmmirror.com/strip-ansi/-/strip-ansi-6.0.1.tgz"

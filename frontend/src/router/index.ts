@@ -70,6 +70,11 @@ const routes: RouteRecordRaw[] = [
         path: 'strategy',
         name: 'Strategy',
         component: () => import('@/views/Analysis/Strategy.vue'),
+      },
+      {
+        path: 'quant',
+        name: 'Quant',
+        component: () => import('@/views/Analysis/Quant.vue'),
         meta: { title: '策略分析' }
       },
 
