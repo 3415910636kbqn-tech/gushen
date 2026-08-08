@@ -1427,10 +1427,12 @@ class ValuationEngine:
         """Execute full pipeline and return markdown output."""
         # 1. Classify
         cls = self.classify()
+        self.classification = cls
         print(f"  分类: {cls['type']} (蓝筹{cls['blue_score']}/成长{cls['growth_score']})", file=sys.stderr)
 
         # 2. WACC
         wacc_data = self.compute_wacc()
+        self.wacc = wacc_data
         print(f"  WACC: {wacc_data['wacc']:.2f}%", file=sys.stderr)
 
         # 3. Run selected methods

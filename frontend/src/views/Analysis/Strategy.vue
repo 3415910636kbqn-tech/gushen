@@ -119,7 +119,7 @@
           <div class="tab-toolbar">
             <el-input
               v-model="valuationCode"
-              placeholder="输入A股代码，如 000001"
+              placeholder="输入A股代码，如 000001.SZ"
               style="width: 240px; margin-right: 12px;"
               @keyup.enter="runValuation"
             />
@@ -269,13 +269,23 @@ const performanceRows = computed(() => {
 })
 
 // ---------- 龟龟估值 ----------
-const valuationCode = ref('000001')
+const valuationCode = ref('000001.SZ')
 const valuationLoading = ref(false)
 const valuationData = ref<any>(null)
 const valuationError = ref('')
 
 const runValuation = async () => {
-  const code = valuationCode.value.trim()
+  let code = valuationCode.value.trim().toUpperCase()
+  if (!code) {
+    ElMessage.warning('请输入股票代码')
+    return
+  }
+  // 6 位纯数字自动补 A 股后缀（与后端规则一致：6/9->SH、0/3->SZ、8/4/920->BJ）
+  if (/^\d{6}$/.test(code)) {
+    if (/^[69]/.test(code)) code += '.SH'
+    else if (/^(8|4|920)/.test(code)) code += '.BJ'
+    else code += '.SZ'
+  }
   if (!code) {
     ElMessage.warning('请输入股票代码')
     return
