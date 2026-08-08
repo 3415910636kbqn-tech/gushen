@@ -102,3 +102,42 @@ async def factor_screen(req: FactorScreenRequest,
             detail += f"（跳过 {len(skipped)} 只: {reasons}）"
         raise HTTPException(status_code=503, detail=detail)
     return {"success": True, "data": r}
+
+
+class BacktestRequest(BaseModel):
+    """A股回测请求体"""
+    symbol: str
+    strategy: str
+    start: str
+    end: str
+    params: dict = {}
+    initial_capital: float = 100000.0
+
+
+@router.post("/backtest")
+async def backtest(req: BacktestRequest, user: dict = Depends(get_current_user)):
+    """A股回测：buy_hold/ma_cross/rsi_reverse/momentum（T+1/涨跌停/手续费）。
+
+    安全边界：只接受白名单 4 个内置策略，拒绝 strategy_fn 自定义回调
+    （防止任意代码执行）；symbol 为 6 位 A 股代码；start/end 为 YYYYMMDD
+    且 start < end。
+    """
+    code = req.symbol.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise HTTPException(status_code=400, detail="无效股票代码，需 6 位数字（A股，无后缀）")
+    if not re.fullmatch(r"\d{8}", req.start) or not re.fullmatch(r"\d{8}", req.end):
+        raise HTTPException(status_code=400, detail="日期需为 YYYYMMDD 格式")
+    if req.start >= req.end:
+        raise HTTPException(status_code=400, detail="start 必须小于 end")
+    if req.strategy not in ("buy_hold", "ma_cross", "rsi_reverse", "momentum"):
+        raise HTTPException(status_code=400,
+                            detail="strategy 仅支持 buy_hold/ma_cross/rsi_reverse/momentum")
+    if req.initial_capital <= 0:
+        raise HTTPException(status_code=400, detail="initial_capital 需为正数")
+
+    from tradingagents.strategies.backtest import run_backtest
+    r = run_backtest(code, req.strategy, req.start, req.end,
+                     params=req.params or {}, initial_capital=req.initial_capital)
+    if "error" in r:
+        raise HTTPException(status_code=502, detail=r["error"])
+    return {"success": True, "data": r}
