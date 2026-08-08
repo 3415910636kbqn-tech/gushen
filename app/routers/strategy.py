@@ -95,8 +95,10 @@ async def factor_screen(req: FactorScreenRequest,
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if r.get("last_date") is None:
-        raise HTTPException(
-            status_code=503,
-            detail="因子选股需要历史截面数据，实时拉取失败；建议离线预计算全市场因子快照",
-        )
+        detail = "因子选股需要历史截面数据，实时拉取失败；建议离线预计算全市场因子快照"
+        skipped = r.get("skipped") or []
+        if skipped:
+            reasons = "; ".join(f"{s['symbol']}: {s['error']}" for s in skipped[:5])
+            detail += f"（跳过 {len(skipped)} 只: {reasons}）"
+        raise HTTPException(status_code=503, detail=detail)
     return {"success": True, "data": r}

@@ -27,6 +27,8 @@ from tradingagents.strategies.factors.operators import (
     ts_min,
     ts_argmax,
     ts_argmin,
+    ts_delay,
+    ts_sum,
     delta,
     decay_linear,
     signed_power,
@@ -155,6 +157,24 @@ def test_ts_rank_window_percentile():
     assert np.allclose(out.iloc[2, 0], 2.0 / 3.0)
 
 
+def test_ts_delay_shift():
+    s = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0]})
+    out = ts_delay(s, 2)
+    assert np.isnan(out.iloc[0, 0]) and np.isnan(out.iloc[1, 0])
+    assert np.allclose(out["a"].iloc[2:].to_numpy(), [1.0, 2.0])
+    with pytest.raises(ValueError):
+        ts_delay(s, 0)  # lookahead ban
+
+
+def test_ts_sum_window():
+    s = pd.DataFrame({"a": [1.0, 2.0, 3.0, 4.0]})
+    out = ts_sum(s, 2)
+    assert np.isnan(out.iloc[0, 0])
+    assert np.allclose(out["a"].iloc[1:].to_numpy(), [3.0, 5.0, 7.0])
+    with pytest.raises(ValueError):
+        ts_sum(s, 0)
+
+
 def test_extra_operators_smoke():
     """其余算子抽查：不抛异常、输出同形。"""
     df = make_cs_wide()
@@ -219,6 +239,50 @@ def test_obv_positive_on_uptrend():
     assert out.iloc[-1, 0] > 0
 
 
+def test_vsump10_delta_vol_formula():
+    """VSUMP_10 = sum(max(Δvol,0))/sum(|Δvol|)（qlib158 vsump10）。
+
+    单调递增量 → 全正增量 → 1.0；单调递减量 → 全负增量 → 0.0。
+    首个完整窗口（前 10 行含首行 Δvol=NaN）为 NaN。
+    """
+    n = 25
+    idx = pd.bdate_range("2025-01-02", periods=n)
+    close = pd.DataFrame({"000001": 10.0 + np.arange(n) * 0.5}, index=idx)
+    up = pd.DataFrame({"000001": 100.0 + np.arange(n) * 10.0}, index=idx)
+    down = pd.DataFrame({"000001": 100.0 + np.arange(n) * -10.0}, index=idx)
+    out_up = compute_factor({"close": close, "vol": up}, "VSUMP_10")
+    out_down = compute_factor({"close": close, "vol": down}, "VSUMP_10")
+    assert np.isnan(out_up.iloc[9, 0])          # 首个窗口含首行 NaN 增量
+    assert np.allclose(out_up.iloc[-1, 0], 1.0)   # 全正增量 → 1
+    assert np.allclose(out_down.iloc[-1, 0], 0.0)  # 全负增量 → 0
+
+
+def test_vma20_ma_over_vol_formula():
+    """VMA_20 = ma20(vol)/vol（qlib158 vma20）：>1 缩量、<1 放量。"""
+    n = 40
+    idx = pd.bdate_range("2025-01-02", periods=n)
+    close = pd.DataFrame({"000001": 10.0 + np.arange(n) * 0.5}, index=idx)
+    rising = pd.DataFrame({"000001": 1.0 + np.arange(n) * 1.0}, index=idx)
+    falling = pd.DataFrame({"000001": 40.0 - np.arange(n) * 1.0}, index=idx)
+    out_r = compute_factor({"close": close, "vol": rising}, "VMA_20")
+    out_f = compute_factor({"close": close, "vol": falling}, "VMA_20")
+    assert np.isnan(out_r.iloc[18, 0])          # warmup（19 行）
+    assert out_r.iloc[-1, 0] < 1.0              # 递增 → 当日量 > 均值 → 放量 <1
+    assert out_f.iloc[-1, 0] > 1.0              # 递减 → 当日量 < 均值 → 缩量 >1
+
+
+def test_corr20_log1p_formula():
+    """CORR_20 = ts_corr(close, log1p(vol), 20)：log1p(vol) 与 close 线性相关 → corr≈1。"""
+    n = 30
+    idx = pd.bdate_range("2025-01-02", periods=n)
+    c = np.arange(1.0, n + 1.0)
+    close = pd.DataFrame({"000001": c}, index=idx)
+    vol = pd.DataFrame({"000001": np.exp(c / 100.0) - 1.0}, index=idx)
+    out = compute_factor({"close": close, "vol": vol}, "CORR_20")
+    assert np.isnan(out.iloc[18, 0])            # warmup（19 行）
+    assert abs(out.iloc[-1, 0] - 1.0) < 1e-6
+
+
 def test_fundamental_placeholder_and_value():
     df = make_cs_wide()
     # 无基本面数据 → NaN 占位（不抛异常）
@@ -228,6 +292,13 @@ def test_fundamental_placeholder_and_value():
     pe = pd.DataFrame(10.0, index=df.index, columns=df.columns)
     out = compute_factor({"close": df, "pe_ttm": pe}, "EP_TTM")
     assert np.allclose(out, 0.1, equal_nan=True)
+    # pe<=0（负/零 PE）→ NaN，不是负 EP
+    pe_neg = pd.DataFrame(-5.0, index=df.index, columns=df.columns)
+    out_neg = compute_factor({"close": df, "pe_ttm": pe_neg}, "EP_TTM")
+    assert out_neg.isna().all().all()
+    pe_zero = pd.DataFrame(0.0, index=df.index, columns=df.columns)
+    out_zero = compute_factor({"close": df, "pe_ttm": pe_zero}, "EP_TTM")
+    assert out_zero.isna().all().all()
 
 
 # ==================== registry ====================

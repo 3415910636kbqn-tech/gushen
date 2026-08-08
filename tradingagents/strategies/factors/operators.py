@@ -117,6 +117,13 @@ def ts_mean(df: pd.DataFrame, n: int) -> pd.DataFrame:
     return df.rolling(window=n, min_periods=n).mean()
 
 
+def ts_sum(df: pd.DataFrame, n: int) -> pd.DataFrame:
+    """滚动求和（per column），warmup → NaN。"""
+    if n < 1:
+        raise ValueError(f"ts_sum window must be >= 1, got {n}")
+    return df.rolling(window=n, min_periods=n).sum()
+
+
 def ts_std(df: pd.DataFrame, n: int) -> pd.DataFrame:
     """滚动样本标准差（ddof=1，per column），warmup → NaN。"""
     if n < 2:
@@ -158,6 +165,16 @@ def ts_argmin(df: pd.DataFrame, n: int) -> pd.DataFrame:
         else float(np.argmin(np.where(np.isnan(a), np.inf, a))),
         raw=True,
     )
+
+
+def ts_delay(df: pd.DataFrame, d: int) -> pd.DataFrame:
+    """滞后移位 ``df.shift(d)``（回看 d 期，历史方向）。
+
+    lookahead ban：``d >= 1`` 严格；``d == 0`` / 负移位（未来数据）不提供。
+    """
+    if d < 1:
+        raise ValueError(f"ts_delay lag must be >= 1 (lookahead ban), got {d}")
+    return df.shift(d)
 
 
 def delta(df: pd.DataFrame, d: int) -> pd.DataFrame:

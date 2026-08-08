@@ -241,30 +241,32 @@ def vol_ratio_5(df: pd.DataFrame, panel=None) -> pd.DataFrame:
 
 
 def corr_20(df: pd.DataFrame, panel=None) -> pd.DataFrame:
-    """CORR_20：close 与 vol 的 20 日滚动相关（量价共振度）。qlib158 corr20。需 vol。"""
+    """CORR_20：close 与 log1p(vol) 的 20 日滚动相关（量价共振度）。qlib158 corr20。需 vol。"""
     vol = _get(panel, "vol")
     if vol is None:
         return _missing_like(df)
-    return ts_corr(df, vol, 20)
+    return ts_corr(df, np.log1p(vol), 20)
 
 
 def vma_20(df: pd.DataFrame, panel=None) -> pd.DataFrame:
-    """VMA_20：成交量动量 vol/ma20(vol) - 1（量能趋势）。qlib158 vma20。需 vol。"""
+    """VMA_20：成交量均线比 ma20(vol)/vol（>1 缩量、<1 放量）。qlib158 vma20。需 vol。"""
     vol = _get(panel, "vol")
     if vol is None:
         return _missing_like(df)
-    return safe_div(vol, ts_mean(vol, 20)) - 1.0
+    return safe_div(ts_mean(vol, 20), vol)
 
 
 def vsump_10(df: pd.DataFrame, panel=None) -> pd.DataFrame:
-    """VSUMP_10：10 日上涨日成交量占比（量能质量）。qlib158 vsump10。需 vol。"""
+    """VSUMP_10：10 日成交量增量正占比 sum(max(Δvol,0))/sum(|Δvol|)。qlib158 vsump10。需 vol。"""
     vol = _get(panel, "vol")
     if vol is None:
         return _missing_like(df)
-    up = (df.diff() > 0).astype(float)
-    up_sum = (up * vol).rolling(10, min_periods=10).sum()
-    vol_sum = vol.rolling(10, min_periods=10).sum()
-    return safe_div(up_sum, vol_sum)
+    diff = vol - vol.shift(1)
+    pos = diff.where(diff > 0, 0.0)
+    absd = diff.abs()
+    num = pos.rolling(10, min_periods=10).sum()
+    den = absd.rolling(10, min_periods=10).sum()
+    return safe_div(num, den)
 
 
 # ==================== 基本面类（6，需外部数据） ====================
@@ -301,7 +303,8 @@ def ep_ttm(df: pd.DataFrame, panel=None) -> pd.DataFrame:
     pe = _get(panel, "pe_ttm")
     if pe is None:
         return _missing_like(df)
-    return safe_div(_ones_like(df), pe)
+    ep = safe_div(_ones_like(df), pe)
+    return ep.where(pe > 0)  # pe<=0（负/零 PE）→ NaN
 
 
 def bp(df: pd.DataFrame, panel=None) -> pd.DataFrame:
@@ -402,12 +405,12 @@ _register(_reg("VR_20", "成交量比率20日", "volume_price",
 _register(_reg("VOL_RATIO_5", "量比5日", "volume_price",
                "vol/ma5(vol)，>1 放量（gtja191 量比）", vol_ratio_5, requires=("close", "vol")))
 _register(_reg("CORR_20", "量价相关20日", "volume_price",
-               "close 与 vol 的 20 日滚动相关（qlib158 corr20）",
+               "close 与 log1p(vol) 的 20 日滚动相关（qlib158 corr20）",
                corr_20, requires=("close", "vol")))
 _register(_reg("VMA_20", "成交量动量20日", "volume_price",
-               "vol/ma20(vol)-1，量能趋势（qlib158 vma20）", vma_20, requires=("close", "vol")))
+               "ma20(vol)/vol，>1 缩量、<1 放量（qlib158 vma20）", vma_20, requires=("close", "vol")))
 _register(_reg("VSUMP_10", "上涨量占比10日", "volume_price",
-               "10 日上涨日成交量占比（qlib158 vsump10）", vsump_10, requires=("close", "vol")))
+               "10 日成交量增量正占比 sum(max(Δvol,0))/sum(|Δvol|)（qlib158 vsump10）", vsump_10, requires=("close", "vol")))
 _register(_reg("ROE_CHG_Q", "ROE环比变化", "fundamental",
                "ROE 环比变化，需 panel[\"roe\"]，缺失→NaN 占位（academic）",
                roe_chg_q, requires=("roe",)))
@@ -415,7 +418,7 @@ _register(_reg("PE_PCT_250", "PE 250日分位", "fundamental",
                "pe_ttm 250 日分位，低分位=低估，需 panel[\"pe_ttm\"]（academic）",
                pe_pct_250, requires=("pe_ttm",)))
 _register(_reg("EP_TTM", "盈利收益率", "fundamental",
-               "1/pe_ttm，高=便宜，需 panel[\"pe_ttm\"]（academic 价值）",
+               "1/pe_ttm（pe<=0→NaN），高=便宜，需 panel[\"pe_ttm\"]（academic 价值）",
                ep_ttm, requires=("pe_ttm",)))
 _register(_reg("BP", "账面市值比", "fundamental",
                "1/pb，价值因子，需 panel[\"pb\"]（academic）", bp, requires=("pb",)))

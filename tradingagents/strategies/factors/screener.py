@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 
 import numpy as np
@@ -29,23 +30,32 @@ _FIELDS = ("open", "high", "low", "close", "vol", "amount")
 
 
 def _daily_panel(pro, symbols, end_date=None):
-    """逐只拉 daily() 历史，构建 OHLCV 宽表面板。返回 (panel, last_date)。"""
+    """逐只拉 daily() 历史，构建 OHLCV 宽表面板。返回 (panel, last_date, skipped)。
+
+    ``skipped`` 为 ``[{"symbol", "error"}, ...]``，记录拉取失败/无数据的股票。
+    """
     end_date = end_date or datetime.now().strftime("%Y%m%d")
     start_date = (datetime.strptime(str(end_date), "%Y%m%d")
                   - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d")
     frames = {}
+    skipped = []
     for code in symbols:
         try:
             df = pro.daily(ts_code=code, start_date=start_date, end_date=end_date)
         except Exception as exc:  # noqa: BLE001 数据源偶发失败，跳过该股
             log.warning("factor-screen: daily(%s) 失败: %s", code, exc)
-            df = None
-        if df is None or df.empty or "trade_date" not in df.columns:
+            skipped.append({"symbol": code, "error": str(exc)})
+            continue
+        if df is None or df.empty:
+            skipped.append({"symbol": code, "error": "daily() 返回空数据"})
+            continue
+        if "trade_date" not in df.columns:
+            skipped.append({"symbol": code, "error": "daily() 缺 trade_date 列"})
             continue
         df = df.sort_values("trade_date").drop_duplicates("trade_date")
         frames[code] = df
     if not frames:
-        return None, None
+        return None, None, skipped
 
     panel = {}
     for field in _FIELDS:
@@ -59,7 +69,7 @@ def _daily_panel(pro, symbols, end_date=None):
     last_date = None
     for df in frames.values():
         last_date = max(df["trade_date"].iloc[-1], last_date or "")
-    return (panel or None), (last_date or None)
+    return (panel or None), (last_date or None), skipped
 
 
 def screen_by_factor(pro, factor, condition="top", top_n=20,
@@ -78,15 +88,29 @@ def screen_by_factor(pro, factor, condition="top", top_n=20,
         raise ValueError("top_n 需为 1-500 的整数")
     if not symbols:
         raise ValueError("受限实现要求 body 传 symbols（股票代码列表，≤50 只）")
-    symbols = [str(s).strip().upper() for s in symbols if str(s).strip()]
+    skipped = []
+    valid_symbols = []
+    for s in symbols:
+        s = str(s).strip().upper()
+        if not s:
+            continue
+        if not re.fullmatch(r"\d{6}(\.(SH|SZ|BJ))?", s):
+            skipped.append({"symbol": s, "error": "格式无效，需 6 位数字（可带 .SH/.SZ/.BJ 后缀）"})
+            continue
+        valid_symbols.append(s)
+    symbols = valid_symbols
+    if not symbols and skipped:
+        raise ValueError("所有 symbol 格式均无效，需 6 位数字（可带 .SH/.SZ/.BJ 后缀）")
     if len(symbols) > MAX_SYMBOLS:
         raise ValueError(f"受限实现最多支持 {MAX_SYMBOLS} 只股票，got {len(symbols)}")
     if trade_date is not None and not str(trade_date).isdigit():
         raise ValueError("trade_date 需为 YYYYMMDD 格式（如 20260807）")
 
-    panel, last_date = _daily_panel(pro, symbols, trade_date)
+    panel, last_date, fetch_skipped = _daily_panel(pro, symbols, trade_date)
+    skipped = skipped + fetch_skipped  # 格式校验跳过 + 拉取失败跳过
     if panel is None or last_date is None:
         return {"factor": factor, "last_date": None, "results": [],
+                "skipped": skipped,
                 "note": "行情数据拉取失败（数据源不可用/网络受限），该端点需要历史截面数据，建议预计算"}
 
     meta = FACTOR_REGISTRY[factor]
@@ -108,4 +132,4 @@ def screen_by_factor(pro, factor, condition="top", top_n=20,
     results = [{"ts_code": code, "value": round(float(v), 6)}
                for code, v in ranked.items()]
     return {"factor": factor, "condition": condition, "top_n": len(results),
-            "last_date": last_date, "results": results, "note": note}
+            "last_date": last_date, "results": results, "skipped": skipped, "note": note}

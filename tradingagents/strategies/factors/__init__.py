@@ -10,6 +10,8 @@ from .operators import (
     ts_min,
     ts_argmax,
     ts_argmin,
+    ts_delay,
+    ts_sum,
     delta,
     decay_linear,
     signed_power,
@@ -28,7 +30,7 @@ from .registry import (
 
 __all__ = [
     "rank", "zscore", "scale", "ts_rank", "ts_mean", "ts_std",
-    "ts_max", "ts_min", "ts_argmax", "ts_argmin", "delta",
+    "ts_max", "ts_min", "ts_argmax", "ts_argmin", "ts_delay", "ts_sum", "delta",
     "decay_linear", "signed_power", "safe_div", "ts_corr", "ts_cov", "vwap",
     "FACTOR_REGISTRY", "Factor", "compute_factor", "compute_factor_panel",
     "list_factors",
