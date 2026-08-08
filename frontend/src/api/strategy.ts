@@ -52,16 +52,16 @@ export interface TurtleScreenerParams {
 export const strategyApi = {
   // NDX 动量对冲信号（美股数据源不可用时后端返回 502，组件内需友好提示）
   ndxMomentum(): Promise<any> {
-    return request.get('/api/strategy/ndx-momentum', { timeout: 120000 })
+    return request.get('/api/strategy/ndx-momentum', { timeout: 120000, retryCount: 0 })
   },
 
   // 龟龟估值分析（akshare 拉取财务数据，放宽超时）
   turtleValuation(code: string): Promise<any> {
-    return request.get(`/api/strategy/turtle-valuation/${code}`, { timeout: 180000 })
+    return request.get(`/api/strategy/turtle-valuation/${code}`, { timeout: 180000, retryCount: 0 })
   },
 
   // 龟龟选股（Tier1 全市场筛选可能需 1-5 分钟，超时放宽到 10 分钟）
   turtleScreener(params: TurtleScreenerParams): Promise<any> {
-    return request.get('/api/strategy/turtle-screener', { params, timeout: 600000 })
+    return request.get('/api/strategy/turtle-screener', { params, timeout: 600000, retryCount: 0 })
   }
 }

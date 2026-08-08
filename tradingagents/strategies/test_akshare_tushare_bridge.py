@@ -324,3 +324,30 @@ def test_extra_endpoints(pro, monkeypatch):
     fa = pro.fina_audit(ts_code="000001.SZ")
     assert {"ts_code", "end_date", "audit_result"}.issubset(fa.columns)
 
+
+# ---- 收尾补充：桥接层空表兜底（Task 4 Important） ----
+def test_daily_basic_market_fallback_empty(monkeypatch):
+    """腾讯/东财全市场快照都失败时应返回带列空表而非抛异常"""
+    import pandas as pd
+    from tradingagents.strategies import akshare_tushare_bridge as br
+    pro = br.ProClient()
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(br.ak, "stock_zh_a_spot_em", boom)
+    monkeypatch.setattr(br.ak, "stock_zh_a_spot_tx", boom)
+    df = pro.daily_basic()
+    assert isinstance(df, pd.DataFrame)
+    assert "ts_code" in df.columns and "pe_ttm" in df.columns
+
+def test_hist_fallback_empty(monkeypatch):
+    """日线/周线东财与新浪都失败时应返回带列空表而非抛异常"""
+    import pandas as pd
+    from tradingagents.strategies import akshare_tushare_bridge as br
+    pro = br.ProClient()
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr(br.ak, "stock_zh_a_hist", boom)
+    monkeypatch.setattr(br.ak, "stock_zh_a_daily", boom)
+    df = pro.daily(ts_code="000001.SZ")
+    assert isinstance(df, pd.DataFrame)
+    assert "trade_date" in df.columns and "close" in df.columns

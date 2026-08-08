@@ -9,7 +9,9 @@
 """
 
 import re
+import logging
 
+logger = logging.getLogger('turtle_inject')
 
 def _ts_code_of(ticker: str) -> str:
     """把 A 股代码规范为 tushare ts_code（'600519'/'600519.SH' -> '600519.SH'）。
@@ -59,5 +61,6 @@ def inject_turtle_valuation(ticker: str, result_data: str) -> str:
         summary += str(val.get("markdown") or "")[:2000]
 
         return result_data + summary
-    except Exception:
+    except Exception as e:
+        logger.warning(f"龟龟估值注入失败(忽略): {e}")
         return result_data

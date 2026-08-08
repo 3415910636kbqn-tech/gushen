@@ -189,3 +189,24 @@ class TestToolkitChinaFundamentals:
         assert isinstance(result, str)
         assert "估值引擎摘要" not in result
         assert calls == []  # 未触发估值注入
+
+# ---- 收尾补充：.BJ 后缀规则 + 输入容错（Task 6 Minor） ----
+import pytest
+from tradingagents.strategies.turtle.inject import _ts_code_of
+
+@pytest.mark.parametrize("inp,expected", [
+    ("920001", "920001.BJ"),
+    ("830001", "830001.BJ"),
+    ("430001", "430001.BJ"),
+    ("bj920001", "920001.BJ"),
+    ("600519", "600519.SH"),
+    ("600519.SH", "600519.SH"),
+    ("sh600519", "600519.SH"),
+    ("000001", "000001.SZ"),
+    ("000001.SZ", "000001.SZ"),
+    ("sz000001", "000001.SZ"),
+    ("abc", ""),
+    ("12345", ""),
+])
+def test_ts_code_of(inp, expected):
+    assert _ts_code_of(inp) == expected
