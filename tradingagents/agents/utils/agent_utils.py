@@ -896,6 +896,16 @@ class Toolkit:
                     logger.error(f"❌ [基本面工具调试] A股基本面数据获取失败: {e}")
                     result_data.append(f"## A股基本面财务数据\n获取失败: {e}")
 
+                # 🐢 龟龟估值引擎摘要注入（A 股专属；失败静默跳过，不阻塞主流程）
+                try:
+                    from tradingagents.strategies.turtle.inject import inject_turtle_valuation
+                    valuation_summary = inject_turtle_valuation(ticker, "")
+                    if valuation_summary:
+                        result_data.append(valuation_summary)
+                        logger.info(f"🐢 [估值引擎] 估值摘要注入成功（{len(valuation_summary)} 字符）")
+                except Exception:
+                    pass
+
             elif is_hk:
                 # 港股：使用AKShare数据源，支持多重备用方案
                 logger.info(f"🇭🇰 [统一基本面工具] 处理港股数据，数据深度: {data_depth}...")
