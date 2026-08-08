@@ -66,6 +66,12 @@ const routes: RouteRecordRaw[] = [
         name: 'BatchAnalysis',
         component: () => import('@/views/Analysis/BatchAnalysis.vue')
       },
+      {
+        path: 'strategy',
+        name: 'Strategy',
+        component: () => import('@/views/Analysis/Strategy.vue'),
+        meta: { title: '策略分析' }
+      },
 
     ]
   },
@@ -479,3 +485,4 @@ export default router
 
 // 导出路由配置供其他地方使用
 export { routes }
+
