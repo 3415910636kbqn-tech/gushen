@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """策略分析 API：NDX 动量对冲 / 龟龟估值 / 龟龟选股"""
 import re
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.routers.auth_db import get_current_user
 from tradingagents.strategies.ndx_momentum_hedge import run_ndx_momentum_hedge
@@ -55,3 +57,46 @@ async def turtle_screener(tier1_only: bool = True, tier2_limit: int = 10,
     """运行龟龟选股器（Tier1 全市场筛选，Tier2 深度分析；akshare 数据）"""
     from tradingagents.strategies.turtle.screener_adapter import run_turtle_screener
     return {"success": True, "data": run_turtle_screener(tier1_only=tier1_only, tier2_limit=tier2_limit)}
+
+class FactorScreenRequest(BaseModel):
+    factor: str
+    condition: str = "top"
+    top_n: int = 20
+    trade_date: Optional[str] = None
+    symbols: Optional[List[str]] = None
+
+
+@router.get("/factors")
+async def list_factor_zoo(user: dict = Depends(get_current_user)):
+    """Alpha 因子库列表（name/display_name/category/description）"""
+    from tradingagents.strategies.factors.registry import list_factors
+    factors = list_factors()
+    return {"success": True, "data": {"count": len(factors), "factors": factors}}
+
+
+@router.post("/factor-screen")
+async def factor_screen(req: FactorScreenRequest,
+                        user: dict = Depends(get_current_user)):
+    """受限因子选股：按因子值对给定 symbols（≤50 只）排序。
+
+    因子计算需要历史截面数据，全市场实时算不可行（数千只×单只日线）；
+    本端点接受 body 传 symbols 列表，经桥接层 daily() 拉取历史构建面板后
+    计算因子值并返回 top/bottom 排序（性能受单只日线请求数限制）。
+    """
+    from tradingagents.strategies import get_pro_api
+    from tradingagents.strategies.factors.screener import screen_by_factor
+    try:
+        pro = get_pro_api()
+        r = screen_by_factor(pro, factor=req.factor, condition=req.condition,
+                             top_n=req.top_n, symbols=req.symbols,
+                             trade_date=req.trade_date)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=f"未知因子: {exc}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if r.get("last_date") is None:
+        raise HTTPException(
+            status_code=503,
+            detail="因子选股需要历史截面数据，实时拉取失败；建议离线预计算全市场因子快照",
+        )
+    return {"success": True, "data": r}
