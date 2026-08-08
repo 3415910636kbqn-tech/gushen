@@ -307,7 +307,9 @@ class ProClient:
     def _daily_basic_market(self, trade_date):
         # 1) 东方财富全市场快照（快，含行业等；网络不可用时回退）
         try:
-            spot = ak.stock_zh_a_spot_em()
+            spot = _call_timeout(lambda: ak.stock_zh_a_spot_em(), timeout=20.0)
+            if spot is None:
+                raise RuntimeError("spot_em 不可达（超时/异常）")
             spot.columns = [str(c).strip() for c in spot.columns]
             out = _pick(spot, {
                 "ts_code": "代码", "pe_ttm": "市盈率-动态", "pb": "市净率",
@@ -320,23 +322,37 @@ class ProClient:
             # 东财总市值单位=元 -> tushare 万元
             for c in ("total_mv", "circ_mv"):
                 out[c] = pd.to_numeric(out[c], errors="coerce") / 10000
+            # 数值列统一转 float（东财 spot 可能返回 str/object）
+            for c in ("pe_ttm", "pb", "turnover_rate", "close"):
+                out[c] = pd.to_numeric(out[c], errors="coerce")
             return out
         except Exception:
             pass
         # 2) 腾讯全市场快照（慢但稳定）：pe_ttm/pn(市净率)/zsz(总市值,亿元)/ltsz(流通市值,亿元)
-        spot = ak.stock_zh_a_spot_tx()
-        out = _pick(spot, {
-            "ts_code": "code", "pe_ttm": "pe_ttm", "pb": "pn",
-            "total_mv": "zsz", "circ_mv": "ltsz",
-            "turnover_rate": "hsl", "close": "zxj",
-        })
-        out["trade_date"] = trade_date
-        out["dv_ttm"] = None
-        out["ts_code"] = out["ts_code"].apply(_ts_code_with_suffix)
-        # 腾讯总市值单位=亿元 -> tushare 万元（×10000）
-        for c in ("total_mv", "circ_mv"):
-            out[c] = pd.to_numeric(out[c], errors="coerce") * 10000
-        return out
+        try:
+            spot = _call_timeout(lambda: ak.stock_zh_a_spot_tx(), timeout=100.0)
+            if spot is None:
+                raise RuntimeError("spot_tx 不可达（超时/异常）")
+            out = _pick(spot, {
+                "ts_code": "code", "pe_ttm": "pe_ttm", "pb": "pn",
+                "total_mv": "zsz", "circ_mv": "ltsz",
+                "turnover_rate": "hsl", "close": "zxj",
+            })
+            out["trade_date"] = trade_date
+            out["dv_ttm"] = None
+            out["ts_code"] = out["ts_code"].apply(_ts_code_with_suffix)
+            # 腾讯总市值单位=亿元 -> tushare 万元（×10000）
+            for c in ("total_mv", "circ_mv"):
+                out[c] = pd.to_numeric(out[c], errors="coerce") * 10000
+            for c in ("pe_ttm", "pb", "turnover_rate", "close"):
+                out[c] = pd.to_numeric(out[c], errors="coerce")
+            return out
+        except Exception:
+            # 兜底：东财/腾讯快照均失败时返回带列名的空表，不抛异常
+            return pd.DataFrame(columns=[
+                "ts_code", "trade_date", "close", "pe_ttm", "pb",
+                "total_mv", "circ_mv", "dv_ttm", "turnover_rate",
+            ])
 
     # ---------- 财务指标 ----------
 
@@ -585,23 +601,30 @@ class ProClient:
             })
             # 东财 vol 已是手，amount 元 -> 千元
         except Exception:
-            daily = ak.stock_zh_a_daily(
-                symbol=f"{_suffix(code).lower()}{code}",
-                start_date=start_date or "19900101",
-                end_date=end_date or "21000118",
-                adjust="qfq",
-            )
-            daily["date"] = pd.to_datetime(daily["date"])
-            if period == "weekly":
-                daily = daily.set_index("date").resample("W-FRI").agg({
-                    "open": "first", "high": "max", "low": "min",
-                    "close": "last", "volume": "sum", "amount": "sum",
-                }).dropna().reset_index()
-            out = _pick(daily, {
-                "trade_date": "date", "open": "open", "high": "high",
-                "low": "low", "close": "close", "vol": "volume", "amount": "amount",
-            })
-            vol_from_shares = True  # 新浪 volume 单位=股，需 /100 转手
+            try:
+                daily = ak.stock_zh_a_daily(
+                    symbol=f"{_suffix(code).lower()}{code}",
+                    start_date=start_date or "19900101",
+                    end_date=end_date or "21000118",
+                    adjust="qfq",
+                )
+                daily["date"] = pd.to_datetime(daily["date"])
+                if period == "weekly":
+                    daily = daily.set_index("date").resample("W-FRI").agg({
+                        "open": "first", "high": "max", "low": "min",
+                        "close": "last", "volume": "sum", "amount": "sum",
+                    }).dropna().reset_index()
+                out = _pick(daily, {
+                    "trade_date": "date", "open": "open", "high": "high",
+                    "low": "low", "close": "close", "vol": "volume", "amount": "amount",
+                })
+                vol_from_shares = True  # 新浪 volume 单位=股，需 /100 转手
+            except Exception:
+                # 兜底：东财/新浪行情均失败时返回带列名的空表，不抛异常
+                return pd.DataFrame(columns=[
+                    "ts_code", "trade_date", "open", "high", "low",
+                    "close", "vol", "amount",
+                ])
         if vol_from_shares:
             out["vol"] = pd.to_numeric(out["vol"], errors="coerce") / 100.0
         out["amount"] = pd.to_numeric(out["amount"], errors="coerce") / 1000.0

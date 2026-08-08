@@ -25,3 +25,8 @@ async def turtle_valuation(ts_code: str):
     """运行龟龟估值引擎（DCF/DDM/PE Band/PEG/PS，akshare 数据）"""
     from tradingagents.strategies.turtle.adapter import run_turtle_valuation
     return {"success": True, "data": run_turtle_valuation(ts_code)}
+@router.get("/turtle-screener")
+async def turtle_screener(tier1_only: bool = True, tier2_limit: int = 10):
+    """运行龟龟选股器（Tier1 全市场筛选，Tier2 深度分析；akshare 数据）"""
+    from tradingagents.strategies.turtle.screener_adapter import run_turtle_screener
+    return {"success": True, "data": run_turtle_screener(tier1_only=tier1_only, tier2_limit=tier2_limit)}
