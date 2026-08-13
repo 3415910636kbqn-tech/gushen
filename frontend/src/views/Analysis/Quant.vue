@@ -67,9 +67,9 @@
             </el-form-item>
           </el-form>
           <el-alert v-if="factorError" type="warning" :title="factorError" show-icon style="margin-bottom: 12px" :closable="false" />
-          <el-table v-if="factorResult?.candidates?.length" :data="factorResult.candidates" border stripe max-height="420">
-            <el-table-column prop="symbol" label="代码" width="110" />
-            <el-table-column prop="factor_value" label="因子值" />
+          <el-table v-if="factorResult?.results?.length" :data="factorResult.results" border stripe max-height="420">
+            <el-table-column prop="ts_code" label="代码" width="120" />
+            <el-table-column prop="value" label="因子值" />
             <el-table-column label="状态">
               <template #default="{ row }">{{ row.error ? row.error : '✓' }}</template>
             </el-table-column>
@@ -244,7 +244,7 @@ const factorResult = ref<any>(null)
 onMounted(async () => {
   try {
     const r: any = await quantApi.factors()
-    factorList.value = r?.data || []
+    factorList.value = r?.data?.factors || r?.data || []
     if (factorList.value.length) factorName.value = factorList.value[0].name
   } catch { /* 因子列表加载失败，静默 */ }
 })
